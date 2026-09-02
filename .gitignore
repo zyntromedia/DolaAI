@@ -1,0 +1,71 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === Virtual Env ===
+.venv/
+venv/
+env/
+.venv.*
+.env
+.env.*
+!.env.example
+
+# === IDE & Editors ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Testing & Coverage ===
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# === Lint & Type ===
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# === Database & Logs ===
+*.db
+*.sqlite3
+*.log
+logs/
+
+# === Docker ===
+docker-compose.override.yml
+
+# === Fine-tune Data ===
+*.jsonl
+dola_training_data.jsonl
+
+# === Temp ===
+tmp/
+temp/
+*.tmp
