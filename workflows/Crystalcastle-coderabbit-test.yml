@@ -1,0 +1,62 @@
+name: CrystalCastle CodeRabbit + Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  coderabbit-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run CodeRabbit Review
+        uses: coderabbitai/coderabbit-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          config_file: .github/coderabbit.yml
+
+      - name: Notify LINE
+        if: always()
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.LINE_TOKEN }}" \
+          -F "message=CodeRabbit review completed for PR #${{ github.event.pull_request.number }}" \
+          https://api.line.me/v2/bot/message/push
+
+      - name: Notify Telegram
+        if: always()
+        run: |
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage \
+          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+          -d text="CodeRabbit review completed for PR #${{ github.event.pull_request.number }}"
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.9, 3.10, 3.11]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=src --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml

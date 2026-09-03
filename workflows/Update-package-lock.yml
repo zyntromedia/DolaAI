@@ -1,0 +1,30 @@
+name: Update package-lock
+on:
+  schedule:
+    - cron: '0 3 * * 1' # every Monday at 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm audit fix || true
+      - name: Commit lockfile if changed
+        run: |
+          git add package-lock.json package.json || true
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update package lock via workflow"
+            git push
+          else
+            echo "No lockfile changes"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

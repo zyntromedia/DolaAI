@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Production-Grade Pytest Authentication Testing</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --bg: #ffffff;
+            --fg: #1f2937;
+            --muted: #6b7280;
+            --border: #d1d5db;
+            --code-bg: #111827;
+            --accent: #2563eb;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111827;
+                --fg: #f3f4f6;
+                --muted: #9ca3af;
+                --border: #374151;
+                --code-bg: #030712;
+                --accent: #60a5fa;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 2rem;
+            background: var(--bg);
+            color: var(--fg);
+            font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+            line-height: 1.6;
+        }
+
+        main {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        h1,
+        h2,
+        h3 {
+            line-height: 1.25;
+        }
+
+        h1 {
+            margin-bottom: 0.5rem;
+        }
+
+        h2 {
+            margin-top: 2.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        h3 {
+            margin-top: 2rem;
+        }
+
+        a {
+            color: var(--accent);
+        }
+
+        .tl-dr {
+            padding: 1rem 1.25rem;
+            border-left: 4px solid var(--accent);
+            background: color-mix(
+                in srgb,
+                var(--accent) 8%,
+                var(--bg)
+            );
+        }
+
+        pre {
+            overflow-x: auto;
+            padding: 1rem;
+            border-radius: 8px;
+            background: var(--code-bg);
+            color: #e5e7eb;
+            font-family:
+                "SFMono-Regular",
+                Consolas,
+                "Liberation Mono",
+                monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        code {
+            font-family:
+                "SFMono-Regular",
+                Consolas,
+                "Liberation Mono",
+                monospace;
+        }
+
+        :not(pre) > code {
+            padding: 0.15rem 0.35rem;
+            border-radius: 4px;
+            background: color-mix(
+                in srgb,
+                var(--muted) 12%,
+                var(--bg)
+            );
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+
+        th,
+        td {
+            border: 1px solid var(--border);
+            padding: 0.6rem;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: color-mix(
+                in srgb,
+                var(--muted) 10%,
+                var(--bg)
+            );
+        }
+
+        .diagram {
+            overflow-x: auto;
+            padding: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            white-space: pre;
+            font-family: monospace;
+        }
+
+        li {
+            margin-bottom: 0.4rem;
+        }
+
+        .warning {
+            padding: 1rem;
+            border-left: 4px solid #f59e0b;
+            background: color-mix(
+                in srgb,
+                #f59e0b 10%,
+                var(--bg)
+            );
+        }
+    </style>
+</head>
+
+<body>
+<main>
+
+    <header>
+        <h1>Production-Grade Pytest Authentication Testing</h1>
+
+        <p class="tl-dr">
+            <strong>TL;DR:</strong>
+            Use <code>pytest-asyncio</code>,
+            <code>httpx.AsyncClient</code>,
+            <code>ASGITransport</code>,
+            async SQLAlchemy sessions, PostgreSQL transactions,
+            SAVEPOINTs, reusable authentication fixtures, and a
+            <code>DatabaseTestContext</code> that owns the complete
+            test transaction lifecycle.
+        </p>
+    </header>
+
+    <section>
+        <h2>1. Pytest Authentication Guidelines</h2>
+
+        <h3>Use fixtures for authentication setup</h3>
+        <p>
+            Create reusable fixtures for users, tokens, sessions, and
+            authenticated clients. Keep authentication setup out of
+            individual test bodies.
+        </p>
+
+        <h3>Never use real credentials</h3>
+        <ul>
+            <li>Use fake/test users.</li>
+            <li>Generate tokens using the application's token implementation.</li>
+            <li>Keep secrets out of source code, logs, and test output.</li>
+        </ul>
+
+        <h3>Separate authentication from authorization</h3>
+        <ul>
+            <li><strong>Authentication:</strong> Who are you?</li>
+            <li><strong>Authorization:</strong> Are you allowed to do this?</li>
+        </ul>
+
+        <h3>Cover important cases</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Scenario</th>
+                    <th>Expected result</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Valid credentials</td>
+                    <td>200 / successful login</td>
+                </tr>
+                <tr>
+                    <td>Invalid password</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Unknown user</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Missing credentials/token</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Expired/invalid token</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Insufficient permissions</td>
+                    <td>403</td>
+                </tr>
+                <tr>
+                    <td>Correct credentials and permissions</td>
+                    <td>Success</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Use parametrization</h3>
+
+        <pre><code>import pytest
+
+
+@pytest.mark.parametrize(
+    ("username", "password", "expected_status"),
+    [
+        ("valid-user", "correct-password", 200),
+        ("valid-user", "wrong-password", 401),
+        ("unknown-user", "correct-password", 401),
+        ("", "", 401),
+    ],
+)
+def test_login(client, username, password, expected_status):
+    response = client.post(
+        "/login",
+        json={
+            "username": username,
+            "password": password,
+        },
+    )
+
+    assert response.status_code == expected_status</code></pre>
+
+        <h3>Test protected endpoints separately</h3>
+
+        <pre><code>def test_protected_endpoint_requires_authentication(client):
+    response = client.get("/api/profile")
+
+    assert response.status_code == 401
+
+
+def test_protected_endpoint_accepts_authenticated_user(
+    authenticated_client,
+):
+    response = authenticated_client.get("/api/profile")
+
+    assert response.status_code == 200</code></pre>
+
+        <h3>Security boundaries</h3>
+
+        <ul>
+            <li>User A cannot access User B's resources.</li>
+            <li>Normal users cannot access admin endpoints.</li>
+            <li>Revoked credentials are rejected.</li>
+            <li>Expired credentials are rejected.</li>
+            <li>Tampered tokens are rejected.</li>
+            <li>Authentication state does not leak between tests.</li>
+        </ul>
+
+        <h3>Recommended test structure</h3>
+
+        <pre><code>tests/
+├── conftest.py
+├── test_auth.py
+├── test_login.py
+├── test_logout.py
+├── test_authorization.py
+└── test_protected_endpoints.py</code></pre>
+    </section>
+
+    <section>
+        <h2>2. Production-Grade Async Stack</h2>
+
+        <p>Recommended components:</p>
+
+        <ul>
+            <li>FastAPI</li>
+            <li>JWT authentication</li>
+            <li>SQLAlchemy async ORM</li>
+            <li>PostgreSQL</li>
+            <li>asyncpg</li>
+            <li>pytest</li>
+            <li>pytest-asyncio</li>
+            <li>httpx.AsyncClient</li>
+            <li>ASGITransport</li>
+        </ul>
+
+        <h3>Test dependency requirements</h3>
+
+        <pre><code>pytest
+pytest-asyncio
+httpx
+sqlalchemy[asyncio]
+asyncpg</code></pre>
+
+        <h3>pytest.ini</h3>
+
+        <pre><code>[pytest]
+asyncio_mode = auto
+testpaths = tests</code></pre>
+    </section>
+
+    <section>
+        <h2>3. Transaction Isolation with SAVEPOINT</h2>
+
+        <p>
+            A simple transaction fixture is insufficient when application
+            code calls <code>session.commit()</code>. Use an outer transaction
+            owned by the test and a nested transaction/SAVEPOINT owned by the
+            application session.
+        </p>
+
+        <div class="diagram"><code>Test fixture
+└── BEGIN                    &lt;-- never permanently committed
+    └── SAVEPOINT            &lt;-- application works here
+        ├── INSERT
+        ├── UPDATE
+        ├── COMMIT
+        │
+        └── new SAVEPOINT</code></div>
+
+        <p>
+            When application code executes
+            <code>await session.commit()</code>, the SAVEPOINT is recreated.
+            The outer transaction remains available for final rollback.
+        </p>
+
+        <p>
+            At teardown:
+        </p>
+
+        <pre><code>await outer_transaction.rollback()</code></pre>
+
+        <p>
+            Everything created during the test is removed.
+        </p>
+    </section>
+
+    <section>
+        <h2>4. Multiple Database Sessions</h2>
+
+        <p>
+            When one FastAPI request uses multiple database dependencies,
+            each test session can have its own SAVEPOINT while sharing the
+            same underlying PostgreSQL connection and outer test transaction.
+        </p>
+
+        <div class="diagram"><code>Test
+│
+└── Connection
+    │
+    └── OUTER TRANSACTION
+        │
+        ├── Session A
+        │   └── SAVEPOINT A
+        │       ├── INSERT
+        │       ├── COMMIT
+        │       └── SAVEPOINT A'
+        │
+        └── Session B
+            └── SAVEPOINT B
+                ├── INSERT
+                ├── COMMIT
+                └── SAVEPOINT B'</code></div>
+
+        <p>
+            This provides one final rollback boundary while allowing
+            independent <code>AsyncSession</code> objects.
+        </p>
+
+        <div class="warning">
+            <strong>Important:</strong>
+            This pattern assumes the sessions use the same database and
+            underlying connection. If dependencies point to genuinely
+            different databases, each database needs its own connection
+            and outer transaction.
+        </div>
+    </section>
+
+    <section>
+        <h2>5. Reusable DatabaseTestContext</h2>
+
+        <p>
+            The reusable context below owns:
+        </p>
+
+        <ul>
+            <li>The database connection.</li>
+            <li>The outer transaction.</li>
+            <li>All test sessions.</li>
+            <li>SAVEPOINT lifecycle.</li>
+            <li>SQLAlchemy transaction listeners.</li>
+            <li>FastAPI dependency overrides.</li>
+            <li>Cleanup and rollback.</li>
+        </ul>
+
+        <h3>tests/conftest.py</h3>
+
+        <pre><code>from __future__ import annotations
+
+from collections.abc import AsyncGenerator, Callable
+from typing import Any
+
+import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    create_async_engine,
+)
+
+from app.database import Base, get_db, get_reporting_db
+from app.main import app
+
+
+TEST_DATABASE_URL = (
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/myapp_test"
+)
+
+
+engine: AsyncEngine = create_async_engine(
+    TEST_DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+)
+
+
+class DatabaseTestContext:
+    """Manage test sessions and FastAPI dependency overrides."""
+
+    def __init__(
+        self,
+        connection: AsyncConnection,
+        application: FastAPI,
+        dependencies: tuple[Callable[..., Any], ...] = (),
+    ) -> None:
+        self.connection = connection
+        self.application = application
+        self.dependencies = dependencies
+
+        self._sessions: list[AsyncSession] = []
+        self._overrides: dict[
+            Callable[..., Any],
+            AsyncSession,
+        ] = {}
+        self._listeners: dict[
+            AsyncSession,
+            Callable[..., Any],
+        ] = {}
+        self._outer_transaction = None
+
+    async def start(self) -> None:
+        """Start the test transaction and database dependencies."""
+        self._outer_transaction = await self.connection.begin()
+
+        for dependency in self.dependencies:
+            self.session_for(dependency)
+
+        await self.initialize()
+        self.apply_overrides()
+
+    def session_for(
+        self,
+        dependency: Callable[..., Any],
+    ) -> AsyncSession:
+        """Return or create a session for a FastAPI dependency."""
+        existing = self._overrides.get(dependency)
+
+        if existing is not None:
+            return existing
+
+        session = AsyncSession(
+            bind=self.connection,
+            expire_on_commit=False,
+        )
+
+        self._sessions.append(session)
+        self._overrides[dependency] = session
+
+        return session
+
+    async def initialize(self) -> None:
+        """Initialize SAVEPOINTs for all registered sessions."""
+        for session in self._sessions:
+            await session.begin_nested()
+            self._install_savepoint_listener(session)
+
+    def _install_savepoint_listener(
+        self,
+        session: AsyncSession,
+    ) -> None:
+        sync_session = session.sync_session
+
+        def restart_savepoint(
+            session_instance: Any,
+            transaction: Any,
+        ) -> None:
+            if not transaction.nested:
+                return
+
+            parent = transaction._parent
+
+            if parent is None or parent.nested:
+                return
+
+            if session_instance.is_active:
+                session_instance.begin_nested()
+
+        event.listen(
+            sync_session,
+            "after_transaction_end",
+            restart_savepoint,
+        )
+
+        self._listeners[session] = restart_savepoint
+
+    def apply_overrides(self) -> None:
+        """Install all registered FastAPI dependency overrides."""
+
+        for dependency, session in self._overrides.items():
+
+            async def override(
+                session: AsyncSession = session,
+            ) -> AsyncGenerator[AsyncSession, None]:
+                yield session
+
+            self.application.dependency_overrides[dependency] = override
+
+    def session(
+        self,
+        dependency: Callable[..., Any],
+    ) -> AsyncSession:
+        """Get the session associated with a dependency."""
+        try:
+            return self._overrides[dependency]
+        except KeyError as exc:
+            raise KeyError(
+                f"Dependency {dependency!r} is not registered."
+            ) from exc
+
+    async def close(self) -> None:
+        """Clean up overrides, sessions, and the outer transaction."""
+        self.application.dependency_overrides.clear()
+
+        for session, listener in self._listeners.items():
+            event.remove(
+                session.sync_session,
+                "after_transaction_end",
+                listener,
+            )
+
+        self._listeners.clear()
+
+        for session in reversed(self._sessions):
+            await session.close()
+
+        self._sessions.clear()
+        self._overrides.clear()
+
+        if (
+            self._outer_transaction is not None
+            and self._outer_transaction.is_active
+        ):
+            await self._outer_transaction.rollback()
+
+        self._outer_transaction = None
+
+
+DATABASE_DEPENDENCIES = (
+    get_db,
+    get_reporting_db,
+)
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def setup_database() -> AsyncGenerator[None, None]:
+    """Create and destroy the schema once per test session."""
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    yield
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db_context() -> AsyncGenerator[
+    DatabaseTestContext,
+    None,
+]:
+    """Provide an isolated DatabaseTestContext."""
+    async with engine.connect() as connection:
+        context = DatabaseTestContext(
+            connection=connection,
+            application=app,
+            dependencies=DATABASE_DEPENDENCIES,
+        )
+
+        await context.start()
+
+        try:
+            yield context
+        finally:
+            await context.close()
+
+
+@pytest_asyncio.fixture
+async def client(
+    db_context: DatabaseTestContext,
+) -> AsyncGenerator[AsyncClient, None]:
+    """Provide an async HTTP client using test database sessions."""
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as test_client:
+        yield test_client
+
+
+@pytest_asyncio.fixture
+async def db_session(
+    db_context: DatabaseTestContext,
+) -> AsyncSession:
+    """Return the primary test database session."""
+    return db_context.session(get_db)
+
+
+@pytest_asyncio.fixture
+async def reporting_session(
+    db_context: DatabaseTestContext,
+) -> AsyncSession:
+    """Return the reporting test database session."""
+    return db_context.session(get_reporting_db)</code></pre>
+    </section>
+
+    <section>
+        <h2>6. Authentication Fixtures</h2>
+
+        <p>
+            Authentication fixtures should use the application's real
+            password hashing and JWT generation functions.
+        </p>
+
+        <pre><code>import pytest_asyncio
+
+from app.auth import create_access_token, get_password_hash
+from app.models import User
+
+
+@pytest_asyncio.fixture
+async def test_user(
+    db_session: AsyncSession,
+) -> User:
+    """Create a standard authenticated test user."""
+    user = User(
+        email="pytest@example.com",
+        username="pytest-user",
+        hashed_password=get_password_hash("test-password"),
+        is_active=True,
+        is_admin=False,
+    )
+
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.refresh(user)
+
+    return user
+
+
+@pytest_asyncio.fixture
+async def access_token(
+    test_user: User,
+) -> str:
+    """Generate a JWT for the test user."""
+    return create_access_token(
+        data={
+            "sub": str(test_user.id),
+        }
+    )
+
+
+@pytest_asyncio.fixture
+async def authenticated_client(
+    client: AsyncClient,
+    access_token: str,
+) -> AsyncClient:
+    """Provide an authenticated HTTP client."""
+    client.headers["Authorization"] = (
+        f"Bearer {access_token}"
+    )
+
+    return client</code></pre>
+
+        <h3>Admin fixture</h3>
+
+        <pre><code>@pytest_asyncio.fixture
+async def admin_user(
+    db_session: AsyncSession,
+) -> User:
+    """Create an administrative test user."""
+    user = User(
+        email="admin@example.com",
+        username="pytest-admin",
+        hashed_password=get_password_hash("admin-password"),
+        is_active=True,
+        is_admin=True,
+    )
+
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.refresh(user)
+
+    return user
+
+
+@pytest_asyncio.fixture
+async def admin_access_token(
+    admin_user: User,
+) -> str:
+    """Generate a JWT for the administrative user."""
+    return create_access_token(
+        data={
+            "sub": str(admin_user.id),
+        }
+    )
+
+
+@pytest_asyncio.fixture
+async def admin_client(
+    client: AsyncClient,
+    admin_access_token: str,
+) -> AsyncClient:
+    """Provide an admin-authenticated HTTP client."""
+    client.headers["Authorization"] = (
+        f"Bearer {admin_access_token}"
+    )
+
+    return client</code></pre>
+    </section>
+
+    <section>
+        <h2>7. Authentication Tests</h2>
+
+        <h3>Protected endpoint requires authentication</h3>
+
+        <pre><code>import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_protected_endpoint_requires_authentication(
+    client: AsyncClient,
+):
+    response = await client.get("/api/profile")
+
+    assert response.status_code == 401</code></pre>
+
+        <h3>Authenticated user can access endpoint</h3>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_protected_endpoint_accepts_authenticated_user(
+    authenticated_client: AsyncClient,
+):
+    response = await authenticated_client.get("/api/profile")
+
+    assert response.status_code == 200</code></pre>
+
+        <h3>Normal user cannot access admin endpoint</h3>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_normal_user_cannot_access_admin_endpoint(
+    authenticated_client: AsyncClient,
+):
+    response = await authenticated_client.get(
+        "/api/admin/users"
+    )
+
+    assert response.status_code == 403</code></pre>
+
+        <h3>Admin can access admin endpoint</h3>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_admin_can_access_admin_endpoint(
+    admin_client: AsyncClient,
+):
+    response = await admin_client.get(
+        "/api/admin/users"
+    )
+
+    assert response.status_code == 200</code></pre>
+
+        <h3>Invalid token</h3>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_invalid_token_is_rejected(
+    client: AsyncClient,
+):
+    client.headers["Authorization"] = (
+        "Bearer invalid.jwt.token"
+    )
+
+    response = await client.get("/api/profile")
+
+    assert response.status_code == 401</code></pre>
+
+        <h3>Missing token</h3>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_missing_token_is_rejected(
+    client: AsyncClient,
+):
+    response = await client.get("/api/profile")
+
+    assert response.status_code == 401</code></pre>
+    </section>
+
+    <section>
+        <h2>8. Testing Application Code That Calls commit()</h2>
+
+        <p>
+            Production endpoints can safely call
+            <code>await db.commit()</code>.
+        </p>
+
+        <pre><code>@router.post("/users")
+async def create_user(
+    payload: UserCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    user = User(
+        email=payload.email,
+        username=payload.username,
+        hashed_password=get_password_hash(
+            payload.password
+        ),
+    )
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return user</code></pre>
+
+        <p>
+            The test can exercise this endpoint normally:
+        </p>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_create_user(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    response = await client.post(
+        "/users",
+        json={
+            "email": "new@example.com",
+            "username": "new-user",
+            "password": "test-password",
+        },
+    )
+
+    assert response.status_code == 201
+
+    result = await db_session.execute(
+        select(User).where(
+            User.email == "new@example.com"
+        )
+    )
+
+    user = result.scalar_one()
+
+    assert user.username == "new-user"</code></pre>
+    </section>
+
+    <section>
+        <h2>9. Multiple Database Dependencies</h2>
+
+        <p>
+            Suppose the application has multiple dependencies:
+        </p>
+
+        <pre><code>async def get_db():
+    ...
+
+
+async def get_reporting_db():
+    ...
+
+
+async def get_analytics_db():
+    ...
+
+
+async def get_audit_db():
+    ...
+
+
+async def get_readonly_db():
+    ...</code></pre>
+
+        <p>
+            Register them once:
+        </p>
+
+        <pre><code>DATABASE_DEPENDENCIES = (
+    get_db,
+    get_reporting_db,
+    get_analytics_db,
+    get_audit_db,
+    get_readonly_db,
+)</code></pre>
+
+        <p>
+            The <code>DatabaseTestContext</code> creates a session for each
+            dependency and automatically installs the corresponding FastAPI
+            override.
+        </p>
+
+        <p>
+            Tests can then retrieve the session they need:
+        </p>
+
+        <pre><code>db = db_context.session(get_db)
+
+reporting_db = (
+    db_context.session(get_reporting_db)
+)
+
+audit_db = (
+    db_context.session(get_audit_db)
+)</code></pre>
+    </section>
+
+    <section>
+        <h2>10. Example Endpoint Using Multiple Sessions</h2>
+
+        <pre><code>@router.post("/orders")
+async def create_order(
+    payload: OrderCreate,
+    db: AsyncSession = Depends(get_db),
+    reporting_db: AsyncSession = Depends(
+        get_reporting_db
+    ),
+):
+    order = Order(
+        customer_id=payload.customer_id,
+        total=payload.total,
+    )
+
+    db.add(order)
+    await db.commit()
+
+    audit = AuditLog(
+        action="order.created",
+        resource_id=order.id,
+    )
+
+    reporting_db.add(audit)
+    await reporting_db.commit()
+
+    return order</code></pre>
+
+        <h3>Corresponding test</h3>
+
+        <pre><code>@pytest.mark.asyncio
+async def test_create_order_with_multiple_sessions(
+    authenticated_client: AsyncClient,
+    db_context: DatabaseTestContext,
+):
+    response = await authenticated_client.post(
+        "/orders",
+        json={
+            "customer_id": 123,
+            "total": 49.99,
+        },
+    )
+
+    assert response.status_code == 200
+
+    db = db_context.session(get_db)
+    reporting_db = (
+        db_context.session(get_reporting_db)
+    )
+
+    order_result = await db.execute(
+        select(Order).where(
+            Order.customer_id == 123
+        )
+    )
+
+    order = order_result.scalar_one()
+
+    audit_result = await reporting_db.execute(
+        select(AuditLog).where(
+            AuditLog.resource_id == order.id
+        )
+    )
+
+    audit = audit_result.scalar_one()
+
+    assert audit.action == "order.created"</code></pre>
+    </section>
+
+    <section>
+        <h2>11. Authentication Testing Layers</h2>
+
+        <div class="diagram"><code>JWT creation
+    ↓
+JWT validation
+    ↓
+Current-user dependency
+    ↓
+Authentication
+    ↓
+Authorization
+    ↓
+Protected business logic
+    ↓
+Database behavior</code></div>
+
+        <p>
+            Test these layers independently where practical. This prevents
+            every endpoint test from becoming an implicit test of the entire
+            authentication system.
+        </p>
+
+        <ul>
+            <li>JWT creation should be tested for expected claims.</li>
+            <li>JWT validation should reject malformed tokens.</li>
+            <li>Expired JWTs should be rejected.</li>
+            <li>Tokens signed with the wrong key should be rejected.</li>
+            <li>Inactive users should be rejected.</li>
+            <li>Role/scope restrictions should return 403.</li>
+            <li>Protected endpoints should verify authenticated identity.</li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>12. Important Architectural Caveats</h2>
+
+        <h3>Different databases</h3>
+
+        <p>
+            Do not force genuinely separate databases into one transaction:
+        </p>
+
+        <div class="diagram"><code>Database A
+└── Connection A
+    └── Transaction A
+
+Database B
+└── Connection B
+    └── Transaction B</code></div>
+
+        <p>
+            Each database requires its own transaction boundary.
+        </p>
+
+        <h3>Concurrent requests</h3>
+
+        <p>
+            Do not use a single connection for concurrent production-style
+            request tests. Two simultaneous requests should use separate
+            connections and transactions.
+        </p>
+
+        <h3>Background tasks</h3>
+
+        <p>
+            Background tasks that create their own database sessions cannot
+            safely participate in the request's fixture-owned transaction.
+            Test those tasks independently or explicitly control their
+            lifecycle.
+        </p>
+
+        <h3>Real password hashing</h3>
+
+        <p>
+            Do not invent a bcrypt hash such as a placeholder test hash if
+            the application expects a real password hash. Use the application's
+            existing <code>get_password_hash()</code> implementation.
+        </p>
+
+        <h3>Authentication libraries</h3>
+
+        <p>
+            Avoid reproducing the complete test suite of mature libraries
+            such as JWT or password-hashing libraries. Test your application's
+            integration, configuration, claims, error handling, and security
+            boundaries instead.
+        </p>
+    </section>
+
+    <section>
+        <h2>13. Recommended Authentication Test Matrix</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Test</th>
+                    <th>Expected</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Valid username/password</td>
+                    <td>200</td>
+                </tr>
+                <tr>
+                    <td>Wrong password</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Unknown user</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Missing Authorization header</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Malformed JWT</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Expired JWT</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Wrong signing key</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Tampered JWT</td>
+                    <td>401</td>
+                </tr>
+                <tr>
+                    <td>Inactive user</td>
+                    <td>401 or application-defined equivalent</td>
+                </tr>
+                <tr>
+                    <td>Normal user accessing admin endpoint</td>
+                    <td>403</td>
+                </tr>
+                <tr>
+                    <td>User accessing another user's resource</td>
+                    <td>403 or 404, according to API policy</td>
+                </tr>
+                <tr>
+                    <td>Admin accessing admin endpoint</td>
+                    <td>200</td>
+                </tr>
+                <tr>
+                    <td>Valid scope</td>
+                    <td>200</td>
+                </tr>
+                <tr>
+                    <td>Missing required scope</td>
+                    <td>403</td>
+                </tr>
+                <tr>
+                    <td>Authentication state between tests</td>
+                    <td>Isolated</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>14. Final Recommended Architecture</h2>
+
+        <div class="diagram"><code>pytest
+│
+├── pytest-asyncio
+│
+├── httpx.AsyncClient
+│   └── ASGITransport
+│       └── FastAPI application
+│
+├── DatabaseTestContext
+│   ├── PostgreSQL connection
+│   ├── outer transaction
+│   ├── Session A + SAVEPOINT
+│   ├── Session B + SAVEPOINT
+│   ├── Session N + SAVEPOINT
+│   └── FastAPI dependency overrides
+│
+├── Authentication fixtures
+│   ├── test_user
+│   ├── access_token
+│   ├── authenticated_client
+│   ├── admin_user
+│   └── admin_client
+│
+└── Tests
+    ├── authentication
+    ├── authorization
+    ├── protected endpoints
+    ├── JWT validation
+    ├── roles/scopes
+    └── security boundaries</code></div>
+    </section>
+
+    <section>
+        <h2>15. Key Rules</h2>
+
+        <ol>
+            <li>
+                Never use production credentials or secrets in tests.
+            </li>
+            <li>
+                Use fixtures for users, JWTs, sessions, and authenticated clients.
+            </li>
+            <li>
+                Test authentication and authorization separately.
+            </li>
+            <li>
+                Use the application's real JWT and password-hashing functions.
+            </li>
+            <li>
+                Use PostgreSQL when production uses PostgreSQL.
+            </li>
+            <li>
+                Use an outer transaction plus SAVEPOINTs when application code
+                calls <code>session.commit()</code>.
+            </li>
+            <li>
+                Give every independent session its own SAVEPOINT.
+            </li>
+            <li>
+                Share the connection only when sessions logically target the
+                same database and test isolation is desired.
+            </li>
+            <li>
+                Use separate connections for concurrency tests.
+            </li>
+            <li>
+                Clear FastAPI dependency overrides during teardown.
+            </li>
+            <li>
+                Roll back the outer transaction after every test.
+            </li>
+            <li>
+                Do not allow background sessions to accidentally escape the
+                test transaction model.
+            </li>
+        </ol>
+    </section>
+
+</main>
+</body>
+</html>
